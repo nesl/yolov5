@@ -137,10 +137,11 @@ class Yolo_Exec:
         seen, self.windows, self.dt = 0, [], (Profile(), Profile(), Profile())
         
     @smart_inference_mode()    
-    def run(self,image_path):
+    def run(self,image):
 
-        s = image_path
-        image = cv2.imread(image_path)
+        s = ""
+        #image = cv2.imread(image_path)
+        image_path = './img.png'
 
             
         im = letterbox(image, self.imgsz, stride=self.stride, auto=True)[0]  # padded resize
