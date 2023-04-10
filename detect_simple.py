@@ -30,10 +30,12 @@ Usage - formats:
 
 import argparse
 import os
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 import platform
 import sys
 from pathlib import Path
 import glob
+import onnx
 
 import pdb
 
@@ -55,6 +57,11 @@ from utils.general import (LOGGER, Profile, check_file, check_img_size, check_im
                            increment_path, non_max_suppression, print_args, scale_boxes, strip_optimizer, xyxy2xywh)
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, smart_inference_mode
+
+
+import tensorrt as trt
+#import pycuda.driver as cuda
+#import pycuda.autoinit
 
 
 class Yolo_Exec:
@@ -136,6 +143,22 @@ class Yolo_Exec:
         self.model.warmup(imgsz=(1 if pt or self.model.triton else bs, 3, *self.imgsz))  # warmup
         seen, self.windows, self.dt = 0, [], (Profile(), Profile(), Profile())
         
+        
+        trt_engine_path = './multiV2Detector-2023-02-14.engine'
+        with open(trt_engine_path, 'rb') as engine_file:
+            with trt.Runtime(trt.Logger()) as runtime:
+                self.engine = runtime.deserialize_cuda_engine(engine_file.read())
+                
+        # check if engine loaded properly
+        if not self.engine:
+            raise Exception("[CVU-Error] Couldn't build engine successfully !")
+
+        # create execution context
+        self.context = self.engine.create_execution_context()
+        if not self.context:
+            raise Exception(
+                "[CVU-Error] Couldn't create execution context from engine successfully !")
+        
     @smart_inference_mode()    
     def run(self,image):
 
@@ -146,6 +169,8 @@ class Yolo_Exec:
             
         im = letterbox(image, self.imgsz, stride=self.stride, auto=True)[0]  # padded resize
         im = im.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+        
+        
         im = np.ascontiguousarray(im)  # contiguous
 
         with self.dt[0]:
@@ -154,11 +179,47 @@ class Yolo_Exec:
             im /= 255  # 0 - 255 to 0.0 - 1.0
             if len(im.shape) == 3:
                 im = im[None]  # expand for batch dim
+        
 
         # Inference
         with self.dt[1]:
             visualize = increment_path(self.save_dir / Path(image_path).stem, mkdir=True) if self.visualize else False
             pred = self.model(im, augment=self.augment, visualize=visualize)
+            
+            """
+            with self.engine.create_execution_context() as context:
+                # Set input shape based on image dimensions for inference
+
+                context.set_binding_shape(self.engine.get_binding_index("images"), (1, 3, self.imgsz[0], self.imgsz[1]))
+                # Allocate host and device buffers
+                bindings = []
+                for binding in self.engine:
+                    binding_idx = self.engine.get_binding_index(binding)
+                    size = trt.volume(context.get_binding_shape(binding_idx))
+                    dtype = trt.nptype(self.engine.get_binding_dtype(binding))
+                    if self.engine.binding_is_input(binding):
+
+                        input_buffer = np.ascontiguousarray(im)
+                        input_memory = cuda.mem_alloc(im.nbytes)
+                        bindings.append(int(input_memory))
+                    else:
+                        pdb.set_trace()
+                        output_buffer = cuda.pagelocked_empty(size, dtype)
+                        output_memory = cuda.mem_alloc(output_buffer.nbytes)
+                        bindings.append(int(output_memory))
+
+                stream = cuda.Stream()
+                # Transfer input data to the GPU.
+                cuda.memcpy_htod_async(input_memory, input_buffer, stream)
+                # Run inference
+                context.execute_async_v2(bindings=bindings, stream_handle=stream.handle)
+                # Transfer prediction output from the GPU.
+                cuda.memcpy_dtoh_async(output_buffer, output_memory, stream)
+                # Synchronize the stream
+                stream.synchronize()
+                
+                pred = output_buffer
+            """
 
         # NMS
         with self.dt[2]:
@@ -191,12 +252,18 @@ class Yolo_Exec:
                     s += f"{n} {self.names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
                 # Write results
-                for *xyxy, conf, cls in reversed(det):
+                for det_row in reversed(det):
                 
-                
-                    xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                    line = (cls, *xywh, conf) if self.save_conf else (cls, *xywh)  # label format
+                    xyxy = det_row[:4].cpu()
+                    conf = det_row[4].cpu()
+                    cls = det_row[5].cpu()
+                    extra = det_row[6:].cpu()
 
+
+                    xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                    line = (cls, *xywh, conf, *extra) if self.save_conf else (cls, *xywh)  # label format
+
+                    
 
                     line_return.append(('%g ' * len(line)).rstrip() % line)
                     
@@ -228,7 +295,7 @@ class Yolo_Exec:
                 
 
             # Print time (inference-only)
-            LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{self.dt[1].dt * 1E3:.1f}ms")
+            #LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{self.dt[1].dt * 1E3:.1f}ms")
 
         return line_return
 
