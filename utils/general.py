@@ -964,6 +964,8 @@ def non_max_suppression(
         else:  # best class only
             conf, j = x[:, 5:mi].max(1, keepdim=True)
             x = torch.cat((box, conf, j.float(), mask), 1)[conf.view(-1) > conf_thres]
+            class_confidences = class_confidences[conf.view(-1) > conf_thres]
+            object_confidence = object_confidence[conf.view(-1) > conf_thres]
 
         # Filter by class
         if classes is not None:
@@ -977,6 +979,9 @@ def non_max_suppression(
         n = x.shape[0]  # number of boxes
         if not n:  # no boxes
             continue
+        
+        class_confidences = class_confidences[x[:, 4].argsort(descending=True)[:max_nms]]
+        object_confidence = object_confidence[x[:, 4].argsort(descending=True)[:max_nms]]
         x = x[x[:, 4].argsort(descending=True)[:max_nms]]  # sort by confidence and remove excess boxes
 
         # Batched NMS
