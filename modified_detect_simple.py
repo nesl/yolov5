@@ -177,7 +177,6 @@ class Yolo_Exec:
         # print(pred[0])
         for i, det in enumerate(pred):  # per image
 
-            
             p, im0, frame = image_path, image.copy(), 0
 
             p = Path(p)  # to Path
@@ -188,6 +187,7 @@ class Yolo_Exec:
             imc = im0.copy() if self.save_crop else im0  # for self.save_crop
             # annotator = Annotator(im0, line_width=self.line_thickness, example=str(self.names))
             if len(det):
+                # print("here")
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
 
@@ -197,15 +197,18 @@ class Yolo_Exec:
                     s += f"{n} {self.names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
                 # Write results
-                for *xyxy, conf, cls in reversed(det):
-                
-                
+                for det_row in reversed(det):
+
+                    xyxy = det_row[:4].cpu()
+                    conf = det_row[4].cpu()
+                    cls = det_row[5].cpu()
+                    extra = det_row[6:].cpu()
+
+
                     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                    line = (cls, *xywh, conf) if self.save_conf else (cls, *xywh)  # label format
-
-
+                    line = (cls, *xywh, conf, *extra) if self.save_conf else (cls, *xywh)  # label format
                     line_return.append(('%g ' * len(line)).rstrip() % line)
-                    
+
                     #print(line_return)
                     # if self.save_txt:  # Write to file
                     #     with open(f'{txt_path}.txt', 'a') as f:
@@ -234,7 +237,7 @@ class Yolo_Exec:
                 
 
             # Print time (inference-only)
-            LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{self.dt[1].dt * 1E3:.1f}ms")
+            # LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{self.dt[1].dt * 1E3:.1f}ms")
         # print("Process time: %f" %(time.time() - start_process_time))
 
         return line_return
