@@ -36,8 +36,6 @@ import torch
 import torchvision
 import yaml
 
-import pdb
-
 from utils import TryExcept, emojis
 from utils.downloads import gsutil_getsize
 from utils.metrics import box_iou, fitness
@@ -925,7 +923,6 @@ def non_max_suppression(
 
     t = time.time()
     mi = 5 + nc  # mask start index
-
     output = [torch.zeros((0, 6 + nm), device=prediction.device)] * bs
     for xi, x in enumerate(prediction):  # image index, image inference
         # Apply constraints
@@ -945,13 +942,10 @@ def non_max_suppression(
         if not x.shape[0]:
             continue
 
-        
+        # Compute conf
         class_confidences = x[:, 5:].detach().clone()
         object_confidence = x[:,4].detach().clone()
-        # Compute conf
         x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
-
-        #print(class_confidences, object_confidence, x)
 
         # Box/Mask
         box = xywh2xyxy(x[:, :4])  # center_x, center_y, width, height) to (x1, y1, x2, y2)
@@ -979,7 +973,7 @@ def non_max_suppression(
         n = x.shape[0]  # number of boxes
         if not n:  # no boxes
             continue
-        
+
         class_confidences = class_confidences[x[:, 4].argsort(descending=True)[:max_nms]]
         object_confidence = object_confidence[x[:, 4].argsort(descending=True)[:max_nms]]
         x = x[x[:, 4].argsort(descending=True)[:max_nms]]  # sort by confidence and remove excess boxes
@@ -996,13 +990,14 @@ def non_max_suppression(
             x[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(1, keepdim=True)  # merged boxes
             if redundant:
                 i = i[iou.sum(1) > 1]  # require redundancy
-        
-        
+
         output[xi] = x[i]
-        try:
-            output[xi] = torch.cat((output[xi],object_confidence[i].unsqueeze(1),class_confidences[i]),dim=1)
-        except:
-            pdb.set_trace()
+        
+        output[xi] = torch.cat((output[xi],object_confidence[i].unsqueeze(1),class_confidences[i]),dim=1)
+
+        
+
+
 
         if mps:
             output[xi] = output[xi].to(device)
